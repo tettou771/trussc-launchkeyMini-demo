@@ -3,28 +3,30 @@
 // =============================================================================
 // LaunchkeyMini - thin wrapper around a Novation Launchkey Mini [MK1]
 // =============================================================================
-// Turns the device's raw MIDI into musician-friendly callbacks, and (best
-// effort) drives the 2-colour pad LEDs through InControl / "extended" mode.
+// Turns the device's raw MIDI into musician-friendly callbacks and (best
+// effort) drives the 2-colour pad LEDs.
 //
-// MK1 layout:
+// MK1 mapping - PROBED ON A REAL DEVICE (2026-06-03), not guessed:
 //   - 25 mini keys : Note On/Off on channel 1 (velocity sensitive)
-//   - 8 knobs      : CC 21..28 on channel 1 (basic MIDI mode)
-//   - 16 pads      : in extended mode -> Note On/Off on channel 16,
-//                    notes 96..103 (top row) and 112..119 (bottom row)
-//   - round btns   : CC 104 (up) / 105 (down)
+//   - 8 knobs      : CC 21..28 on channel 1
+//   - 16 pads      : Note On/Off on channel 10 (NOT an "extended" mode).
+//                    Pad notes, pads numbered 1..16 (top row 1..8, bottom row
+//                    9..16, left -> right):
+//                      top:    40 41 42 43 | 48 49 50 51
+//                      bottom: 36 37 38 39 | 44 45 46 47
+//   - round btns   : CC 108 (top) / 109 (bottom) on channel 1
+//   - octave btns  : emit NO MIDI - they shift the keyboard's note range on the
+//                    device itself, so the keys just send already-shifted notes.
+//                    There's nothing to listen for; this is a hardware limit.
 //
-// LED control (extended mode only): send a Note On on channel 16 to the pad's
-// note; the velocity is a 2-colour value = 16*green + red (each 0..3), so the
-// palette is red / amber / green only - there is no blue on this hardware.
+// Pad LEDs have red/green diodes only (no blue). We light a pad by echoing its
+// note back on channel 10 with a velocity colour = 16*green + red (each 0..3).
+// This is unconfirmed on the MK1 - if the device ignores it the pads simply
+// stay dark; the rest of the demo is unaffected.
 //
-// The Mini exposes two USB-MIDI ports: keys/knobs arrive on the main port,
-// while the extended pad messages + LED control live on the second
-// "InControl" port. We open whatever we can find and merge the input. None of
-// this uses SysEx, so it also works over Web MIDI (unlike the Launchpad).
-//
-// NOTE: extended mode and the exact LED behaviour are documented for the MK2;
-// on a real MK1 they are unconfirmed. The keyboard and knobs work regardless -
-// the pad LEDs are a bonus that simply stays dark if the device ignores it.
+// The Mini exposes two USB-MIDI ports; we open both inputs and merge them, and
+// route purely by channel, so port ordering doesn't matter. None of this uses
+// SysEx, so it also works over Web MIDI.
 // =============================================================================
 
 #include <tcxMidi.h>
@@ -53,8 +55,14 @@ namespace color {
     const int DimAmber = padColor(1, 1);
 }
 
-// Round transport / track buttons (CC numbers).
-enum class Button { Up = 104, Down = 105 };
+// Round scene/launch buttons to the right of the pads (CC numbers, channel 1).
+enum class Button { Up = 108, Down = 109 };
+
+// Pad notes in pad-index order 0..15 (top row 0..7, bottom row 8..15).
+inline const int padNotes[16] = {
+    40, 41, 42, 43, 48, 49, 50, 51,   // top row    -> index 0..7
+    36, 37, 38, 39, 44, 45, 46, 47    // bottom row -> index 8..15
+};
 
 } // namespace lk
 
@@ -66,41 +74,31 @@ public:
     std::function<void(int index, int velocity, bool on)> onPad;    // index 0..15
     std::function<void(lk::Button button, bool pressed)>  onButton;
 
-    // Open the device. Keys/knobs come from the main port; pads + LEDs use the
-    // second "InControl" port when present (we fall back to a single port).
+    // Open the device. Inputs from both ports are merged; the first output port
+    // is used for pad LEDs.
     bool connect(const std::string& match = "Launchkey") {
-        auto ins  = MidiIn::listDevices();
-        auto outs = MidiOut::listDevices();
+        auto inPorts  = matchingPorts(MidiIn::listDevices(),  match);
+        auto outPorts = matchingPorts(MidiOut::listDevices(), match);
+        if (inPorts.empty()) return false;
 
-        int mainInIdx  = pickPort(ins,  match, /*incontrol=*/false);
-        int ctrlInIdx  = pickPort(ins,  match, /*incontrol=*/true);
-        int ctrlOutIdx = pickPort(outs, match, /*incontrol=*/true);
+        mainIn_.openPort(inPorts[0]);
+        if (inPorts.size() > 1) ctrlIn_.openPort(inPorts[1]);  // merge the 2nd port
+        if (!outPorts.empty()) out_.openPort(outPorts[0]);
 
-        if (mainInIdx < 0) return false;
-        mainIn_.openPort(mainInIdx);
-
-        // Only open the InControl input if it is a *different* port.
-        if (ctrlInIdx >= 0 && ctrlInIdx != mainInIdx) ctrlIn_.openPort(ctrlInIdx);
-        if (ctrlOutIdx >= 0) ctrlOut_.openPort(ctrlOutIdx);
-
-        enterExtendedMode();
         clearPads();
         return true;
     }
 
-    // Return the pads to their default mode and close the ports.
+    // Turn the LEDs off and close the ports.
     void disconnect() {
-        if (ctrlOut_.isOpen()) {
-            clearPads();
-            exitExtendedMode();
-        }
+        if (out_.isOpen()) clearPads();
         mainIn_.closePort();
         ctrlIn_.closePort();
-        ctrlOut_.closePort();
+        out_.closePort();
     }
 
     bool isConnected() const { return mainIn_.isOpen(); }
-    bool hasLeds()     const { return ctrlOut_.isOpen(); }
+    bool hasLeds()     const { return out_.isOpen(); }
 
     // Drain incoming MIDI from both ports and dispatch. Call once per frame.
     void update() {
@@ -109,11 +107,11 @@ public:
     }
 
     // -------------------------------------------------------------------------
-    // Pad LEDs (extended mode). index 0..15: top row 0..7, bottom row 8..15.
+    // Pad LEDs. index 0..15: top row 0..7, bottom row 8..15. (Unconfirmed MK1.)
     // -------------------------------------------------------------------------
     void setPadLed(int index, int colorVel) {
-        if (!ctrlOut_.isOpen() || index < 0 || index > 15) return;
-        ctrlOut_.sendNoteOn(16, padNote(index), colorVel);
+        if (!out_.isOpen() || index < 0 || index > 15) return;
+        out_.sendNoteOn(10, lk::padNotes[index], colorVel);
     }
 
     void clearPads() {
@@ -121,37 +119,19 @@ public:
     }
 
 private:
-    static int padNote(int index) {
-        return index < 8 ? (96 + index) : (112 + (index - 8));
-    }
-
     static bool padNoteToIndex(int note, int& index) {
-        if (note >= 96  && note <= 103) { index = note - 96;        return true; }
-        if (note >= 112 && note <= 119) { index = 8 + (note - 112); return true; }
+        for (int i = 0; i < 16; ++i) {
+            if (lk::padNotes[i] == note) { index = i; return true; }
+        }
         return false;
     }
 
-    // Pick a port by name. When InControl is present the device lists two
-    // "Launchkey" ports; the second / "InControl" one carries pads + LEDs.
-    static int pickPort(const std::vector<MidiDeviceInfo>& devices,
-                        const std::string& match, bool incontrol) {
-        int firstMatch = -1, lastMatch = -1, namedInControl = -1;
-        for (const auto& d : devices) {
-            if (d.name.find(match) == std::string::npos) continue;
-            if (firstMatch < 0) firstMatch = d.portNumber;
-            lastMatch = d.portNumber;
-            if (d.name.find("InControl") != std::string::npos ||
-                d.name.find("MIDIIN2")   != std::string::npos ||
-                d.name.find("MIDI2")     != std::string::npos) {
-                namedInControl = d.portNumber;
-            }
-        }
-        if (incontrol) {
-            if (namedInControl >= 0) return namedInControl;
-            // No helpful names: assume the *second* matching port is InControl.
-            return (lastMatch != firstMatch) ? lastMatch : firstMatch;
-        }
-        return firstMatch;
+    static std::vector<int> matchingPorts(const std::vector<MidiDeviceInfo>& devices,
+                                          const std::string& match) {
+        std::vector<int> ports;
+        for (const auto& d : devices)
+            if (d.name.find(match) != std::string::npos) ports.push_back(d.portNumber);
+        return ports;
     }
 
     void drain(MidiIn& in) {
@@ -165,7 +145,7 @@ private:
             int cc = m.getControl();
             if (cc >= 21 && cc <= 28) {
                 if (onKnob) onKnob(cc - 21, m.getValue());
-            } else if (cc == 104 || cc == 105) {
+            } else if (cc == 108 || cc == 109) {
                 if (onButton) onButton(static_cast<lk::Button>(cc), m.getValue() > 0);
             }
             return;
@@ -176,21 +156,15 @@ private:
         if (!noteOn && !noteOff) return;
 
         int padIndex;
-        // Extended-mode pads come in on channel 16; the keyboard is channel 1.
-        if (m.getChannel() == 16 && padNoteToIndex(m.getPitch(), padIndex)) {
+        // Pads are channel 10; the keyboard is channel 1.
+        if (m.getChannel() == 10 && padNoteToIndex(m.getPitch(), padIndex)) {
             if (onPad) onPad(padIndex, m.getVelocity(), m.isNoteOn());
             return;
         }
         if (onKey) onKey(m.getPitch(), m.getVelocity(), m.isNoteOn());
     }
 
-    // InControl / extended-mode enable: Note On (note 12) on channel 1, sent to
-    // the InControl port. Documented for the MK2; harmless on an MK1 that
-    // doesn't support it (the keyboard keeps working either way).
-    void enterExtendedMode() { if (ctrlOut_.isOpen()) ctrlOut_.sendNoteOn(1, 12, 127); }
-    void exitExtendedMode()  { if (ctrlOut_.isOpen()) ctrlOut_.sendNoteOn(1, 12, 0); }
-
-    MidiIn  mainIn_;   // keys + knobs (channel 1)
-    MidiIn  ctrlIn_;   // extended pads (channel 16), if a second port exists
-    MidiOut ctrlOut_;  // LED control + extended-mode enable
+    MidiIn  mainIn_;   // first port  (keys/knobs on ch1, pads on ch10)
+    MidiIn  ctrlIn_;   // second port, merged in case messages arrive there
+    MidiOut out_;      // pad LEDs (ch10)
 };

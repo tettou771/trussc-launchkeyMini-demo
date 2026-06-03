@@ -66,6 +66,13 @@ void tcApp::setup() {
     lk_.onKnob = [this](int index, int value)        { onKnob(index, value); };
     lk_.onPad  = [this](int index, int vel, bool on) { onPad(index, vel, on); };
 
+    // The device's own octave buttons emit no MIDI, so the round scene buttons
+    // shift the (software) octave instead - a handy MIDI-driven replacement.
+    lk_.onButton = [this](lk::Button b, bool pressed) {
+        if (!pressed) return;
+        selectOctave(octaveIdx_ + (b == lk::Button::Up ? 1 : -1));
+    };
+
     // Connection happens in update() once midiReady() (deferred on the web).
 }
 
@@ -136,7 +143,7 @@ void tcApp::draw() {
     // Footer help.
     setColor(0.55f);
     drawBitmapString("keys = play   knobs = wave/ADSR/length/detune/volume   "
-                     "top pads = preset   bottom pads = octave",
+                     "top pads = preset   bottom pads / round buttons = octave",
                      20, H - 16);
 }
 
