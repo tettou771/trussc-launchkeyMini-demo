@@ -109,6 +109,11 @@ The Mini exposes two USB-MIDI ports. The wrapper opens both inputs and merges
 them, then routes purely by channel (ch1 → keys/knobs/buttons, ch10 → pads), so
 port ordering doesn't matter.
 
+Input is **event-driven**: it subscribes to `MidiIn::onMessage`, which fires on
+libremidi's input thread the moment a message arrives, so notes trigger with
+minimal timing jitter (no waiting for the next frame). Audio triggering is
+thread-safe, and `tcApp` guards the state shared with `draw()` behind a mutex.
+
 ## License
 
 MIT

@@ -27,6 +27,12 @@
 // The Mini exposes two USB-MIDI ports; we open both inputs and merge them, and
 // route purely by channel, so port ordering doesn't matter. None of this uses
 // SysEx, so it also works over Web MIDI.
+//
+// Input is **event-driven**: we subscribe to MidiIn::onMessage, which fires on
+// libremidi's input thread the instant a message arrives. That removes the
+// up-to-one-frame jitter of frame-rate polling - notes trigger immediately. The
+// trade-off is that onKey/onKnob/onPad/onButton run on that thread, so the app
+// must guard any state they share with draw() (see tcApp's mutex).
 // =============================================================================
 
 #include <tcxMidi.h>
@@ -85,12 +91,20 @@ public:
         if (inPorts.size() > 1) ctrlIn_.openPort(inPorts[1]);  // merge the 2nd port
         if (!outPorts.empty()) out_.openPort(outPorts[0]);
 
+        // Event-driven: dispatch on libremidi's input thread (lowest jitter),
+        // not by polling once per frame.
+        inListener_ = mainIn_.onMessage.listen([this](MidiMessage& m) { dispatch(m); });
+        if (ctrlIn_.isOpen())
+            ctrlListener_ = ctrlIn_.onMessage.listen([this](MidiMessage& m) { dispatch(m); });
+
         clearPads();
         return true;
     }
 
     // Turn the LEDs off and close the ports.
     void disconnect() {
+        inListener_   = tc::EventListener{};  // unsubscribe
+        ctrlListener_ = tc::EventListener{};
         if (out_.isOpen()) clearPads();
         mainIn_.closePort();
         ctrlIn_.closePort();
@@ -99,12 +113,6 @@ public:
 
     bool isConnected() const { return mainIn_.isOpen(); }
     bool hasLeds()     const { return out_.isOpen(); }
-
-    // Drain incoming MIDI from both ports and dispatch. Call once per frame.
-    void update() {
-        drain(mainIn_);
-        drain(ctrlIn_);
-    }
 
     // -------------------------------------------------------------------------
     // Pad LEDs. index 0..15: top row 0..7, bottom row 8..15. (Unconfirmed MK1.)
@@ -134,12 +142,6 @@ private:
         return ports;
     }
 
-    void drain(MidiIn& in) {
-        if (!in.isOpen()) return;
-        MidiMessage m;
-        while (in.getNextMessage(m)) dispatch(m);
-    }
-
     void dispatch(const MidiMessage& m) {
         if (m.isControlChange()) {
             int cc = m.getControl();
@@ -167,4 +169,7 @@ private:
     MidiIn  mainIn_;   // first port  (keys/knobs on ch1, pads on ch10)
     MidiIn  ctrlIn_;   // second port, merged in case messages arrive there
     MidiOut out_;      // pad LEDs (ch10)
+
+    tc::EventListener inListener_;    // onMessage subscription (RAII)
+    tc::EventListener ctrlListener_;
 };

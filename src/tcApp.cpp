@@ -59,6 +59,7 @@ void tcApp::setup() {
     // shift the (software) octave instead - a handy MIDI-driven replacement.
     lk_.onButton = [this](lk::Button b, bool pressed) {
         if (!pressed) return;
+        std::lock_guard<std::mutex> lock(mtx_);
         selectOctave(octaveIdx_ + (b == lk::Button::Up ? 1 : -1));
     };
 
@@ -69,6 +70,10 @@ void tcApp::update() {
     double t  = getElapsedTime();
     float  dt = (float)(t - lastT_);
     lastT_ = t;
+
+    // Guard the state the MIDI thread also touches (it triggers audio + writes
+    // visual state from onKey/onKnob/onPad on libremidi's input thread).
+    std::lock_guard<std::mutex> lock(mtx_);
 
     if (!started_ && midiReady()) {
         started_   = true;
@@ -82,8 +87,6 @@ void tcApp::update() {
             logWarning("launchkey") << "No Launchkey Mini found - connect one and relaunch";
         }
     }
-
-    lk_.update();
 
     // Decay the transient highlights.
     for (auto& g : knobGlow_) g = std::max(0.0f, g - dt * 2.0f);
@@ -102,6 +105,11 @@ void tcApp::update() {
 
 void tcApp::draw() {
     clear(0.07f);
+
+    // Hold the lock for the frame: the MIDI thread mutates the state we read
+    // here. (Drawing is fast; a note that lands mid-draw waits < a frame's
+    // draw time - far less than the ~16 ms of frame-rate polling.)
+    std::lock_guard<std::mutex> lock(mtx_);
 
     const float W = (float)getWindowWidth();
     const float H = (float)getWindowHeight();
@@ -137,13 +145,16 @@ void tcApp::draw() {
 }
 
 void tcApp::cleanup() {
-    lk_.disconnect();  // turn the LEDs off and leave extended mode
+    lk_.disconnect();  // unsubscribe, turn the LEDs off, close the ports
 }
 
 // =============================================================================
 // Device callbacks
 // =============================================================================
 void tcApp::onKey(int note, int velocity, bool on) {
+    // Runs on the MIDI thread - guard shared synth + visual state.
+    std::lock_guard<std::mutex> lock(mtx_);
+
     int pitch = note + 12 * kOctaveOffsets[octaveIdx_];
     if (pitch < 0 || pitch > 127) return;
 
@@ -166,16 +177,18 @@ void tcApp::onKey(int note, int velocity, bool on) {
 
 void tcApp::onKnob(int index, int value) {
     if (index < 0 || index > 7) return;
+    std::lock_guard<std::mutex> lock(mtx_);
     patch_.setKnob(index, value);
     knobGlow_[index] = 1.0f;
 }
 
 void tcApp::onPad(int index, int velocity, bool on) {
     if (index < 0 || index > 15) return;
+    std::lock_guard<std::mutex> lock(mtx_);
     if (on) padFlash_[index] = 1.0f;
     if (!on) return;
 
-    if (index < 8) selectPreset(index);
+    if (index < 8) selectPreset(index);   // helpers run under this lock
     else           selectOctave(index - 8);
 }
 

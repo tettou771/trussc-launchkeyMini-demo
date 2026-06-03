@@ -8,6 +8,7 @@
 #include "Scope.h"
 
 #include <array>
+#include <mutex>
 #include <vector>
 
 using namespace tc;
@@ -63,6 +64,10 @@ private:
     bool started_   = false;
     bool connected_ = false;
     double lastT_   = 0.0;
+
+    // MIDI callbacks fire on libremidi's input thread; this guards everything
+    // they touch (synth + visual state) against the main draw/update thread.
+    std::mutex mtx_;
 
     // Visual state, indexed by *played* pitch (after transpose).
     array<bool,  128> held_{};
