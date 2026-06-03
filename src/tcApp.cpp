@@ -34,21 +34,6 @@ int whiteCount() {
     return c;
 }
 
-// One cycle of each waveform, phase in [0,1) -> sample in [-1,1].
-float waveSample(Wave wave, float phase) {
-    phase -= std::floor(phase);
-    switch (wave) {
-        case Wave::Sin:      return std::sin(phase * TAU);
-        case Wave::Triangle: return 4.0f * std::fabs(phase - 0.5f) - 1.0f;
-        case Wave::Square:   return phase < 0.5f ? 1.0f : -1.0f;
-        case Wave::Sawtooth: return 2.0f * phase - 1.0f;
-        default: {  // Noise: stable pseudo-random per bucket
-            float h = std::sin(std::floor(phase * 73.0f) * 12.9898f) * 43758.5453f;
-            return 2.0f * (h - std::floor(h)) - 1.0f;
-        }
-    }
-}
-
 // Hue for the current waveform, used to tint the scope + particles.
 float waveHue(int waveIndex) {
     return std::fmod(0.08f + waveIndex * 0.12f, 1.0f);
@@ -61,6 +46,10 @@ float waveHue(int waveIndex) {
 // =============================================================================
 void tcApp::setup() {
     selectPreset(0);  // give the keys a sound before any pad is touched
+
+    // Start the audio engine and tap its output for the oscilloscope.
+    AudioEngine::getInstance().init();
+    scope_.attach();
 
     lk_.onKey  = [this](int note, int vel, bool on)  { onKey(note, vel, on); };
     lk_.onKnob = [this](int index, int value)        { onKnob(index, value); };
@@ -226,24 +215,29 @@ void tcApp::refreshPadLeds() {
 // Drawing
 // =============================================================================
 void tcApp::drawScope(float x, float y, float w, float h, double t) {
-    // Panel.
+    (void)t;
+
+    // Panel + zero line.
     setColor(0.11f);
     drawRect(x, y, w, h);
+    float cy = y + h * 0.5f;
+    setColor(0.18f);
+    drawLine(x, cy, x + w, cy);
 
-    float energy = voices_.energy(t);
-    float amp    = (0.10f + 0.85f * energy) * (h * 0.42f);
-    float cy     = y + h * 0.5f;
-    float scroll = (float)t * 1.4f;
-    const float cycles = 3.0f;
+    // Plot the *real* audio output captured from the engine.
+    static std::array<float, Scope::N> samples;
+    scope_.readWindow(samples);
 
+    const float gain  = h * 0.45f * 3.5f;  // output is quiet; scale it up
+    const float clamp = h * 0.48f;
     setColor(Color::fromHSB(waveHue(patch_.waveIndex()), 0.6f, 1.0f));
 
-    int N = (int)w;
     float px = x, py = cy;
-    for (int i = 0; i <= N; i += 2) {
-        float ph = (float)i / N * cycles + scroll;
-        float yy = cy - waveSample(patch_.wave, ph) * amp;
-        float xx = x + i;
+    for (int i = 0; i < Scope::N; ++i) {
+        float s = samples[i] * gain;
+        s = std::max(-clamp, std::min(clamp, s));
+        float xx = x + (float)i / (Scope::N - 1) * w;
+        float yy = cy - s;
         if (i > 0) drawLine(px, py, xx, yy);
         px = xx;
         py = yy;
@@ -257,7 +251,7 @@ void tcApp::drawScope(float x, float y, float w, float h, double t) {
     }
 
     setColor(0.5f);
-    drawBitmapString(string("wave: ") + patch_.waveName(), x + 8, y + 16);
+    drawBitmapString(string("audio out  (wave: ") + patch_.waveName() + ")", x + 8, y + 16);
 }
 
 void tcApp::drawKnobs(float x, float y, float w, float h, double t) {

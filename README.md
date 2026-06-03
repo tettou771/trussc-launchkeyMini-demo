@@ -100,6 +100,8 @@ The device-specific code (port choice, note/CC layout, LED encoding) lives in
 
 - `Patch.h` — the live patch, the 8-knob mapping, and the 8 presets.
 - `Voices.h` — a 16-voice pool of one-shot ChipSound notes.
+- `Scope.h` — taps the engine's real output (`audioOut` at Monitor priority)
+  into a ring buffer, so the oscilloscope shows the actual sound, not a fake wave.
 - `tcApp` — wires the device to the synth and draws the scope / knobs / pads /
   keyboard.
 

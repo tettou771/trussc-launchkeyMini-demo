@@ -5,6 +5,7 @@
 #include "LaunchkeyMini.h"
 #include "Patch.h"
 #include "Voices.h"
+#include "Scope.h"
 
 #include <array>
 #include <vector>
@@ -54,6 +55,7 @@ private:
     LaunchkeyMini lk_;
     Voices        voices_;
     Patch         patch_;
+    Scope         scope_;
 
     int preset_    = 0;
     int octaveIdx_ = 4;   // index into kOctaveOffsets; 4 = +0 octaves
