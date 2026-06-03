@@ -91,16 +91,6 @@ void tcApp::update() {
     // Decay the transient highlights.
     for (auto& g : knobGlow_) g = std::max(0.0f, g - dt * 2.0f);
     for (auto& f : padFlash_) f = std::max(0.0f, f - dt * 3.0f);
-
-    // Advance and cull particles.
-    for (auto& p : particles_) {
-        p.y    += p.vy * dt;
-        p.life -= dt;
-    }
-    particles_.erase(
-        std::remove_if(particles_.begin(), particles_.end(),
-                       [](const Particle& p) { return p.life <= 0.0f; }),
-        particles_.end());
 }
 
 void tcApp::draw() {
@@ -162,16 +152,9 @@ void tcApp::onKey(int note, int velocity, bool on) {
         held_[pitch]    = true;
         noteVel_[pitch] = velocity / 127.0f;
         voices_.noteOn(pitch, velocity, patch_, getElapsedTime());
-
-        // Spawn a rising particle from the key.
-        float x = noteToX(pitch);
-        if (x >= 0.0f) {
-            float v = velocity / 127.0f;
-            Color c = Color::fromHSB(waveHue(patch_.waveIndex()), 0.7f, 1.0f);
-            particles_.push_back({x, kbY_, -(80.0f + 220.0f * v), 0.5f + 0.6f * v, c});
-        }
     } else {
         held_[pitch] = false;
+        voices_.noteOff(pitch);  // releasing the key stops the note
     }
 }
 
@@ -254,13 +237,6 @@ void tcApp::drawScope(float x, float y, float w, float h, double t) {
         if (i > 0) drawLine(px, py, xx, yy);
         px = xx;
         py = yy;
-    }
-
-    // Particles float up across the scope band.
-    for (const auto& p : particles_) {
-        float a = std::min(p.life, 1.0f);
-        setColor(Color(p.color.r, p.color.g, p.color.b, a));
-        drawCircle(p.x, p.y, 2.5f + 2.0f * a);
     }
 
     setColor(0.5f);
@@ -374,12 +350,4 @@ void tcApp::drawKeyboard(float x, float y, float w, float h) {
         else          setColor(Color(0.08f, 0.08f, 0.1f));
         drawRect(kx, y, bw, bh);
     }
-}
-
-float tcApp::noteToX(int pitch) const {
-    if (pitch < kLo || pitch > kHi) return -1.0f;
-    int   nWhite = whiteCount();
-    float kw     = kbW_ / nWhite;
-    if (isWhite(pitch)) return kbX_ + whitesBefore(pitch) * kw + kw * 0.5f;
-    return kbX_ + whitesBefore(pitch) * kw;  // black sits on the boundary
 }

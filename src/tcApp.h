@@ -51,7 +51,6 @@ private:
     void drawKnobs(float x, float y, float w, float h, double t);
     void drawPads(float x, float y, float w, float h, double t);
     void drawKeyboard(float x, float y, float w, float h);
-    float noteToX(int pitch) const;   // screen x of a key (uses last layout)
 
     LaunchkeyMini lk_;
     Voices        voices_;
@@ -75,9 +74,6 @@ private:
     array<float, 8>   knobGlow_{};   // recent-touch highlight per knob
     array<float, 16>  padFlash_{};   // recent-hit flash per pad
 
-    // Keyboard geometry, refreshed each frame so events can find a key's x.
+    // Keyboard rect, recomputed each frame in draw().
     float kbX_ = 20.0f, kbW_ = 960.0f, kbY_ = 480.0f, kbH_ = 130.0f;
-
-    struct Particle { float x, y, vy, life; Color color; };
-    vector<Particle> particles_;
 };

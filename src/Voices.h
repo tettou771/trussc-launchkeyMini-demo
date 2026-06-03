@@ -44,16 +44,14 @@ public:
         voices_[v].endT   = t + patch.length;
     }
 
-    // Rough output energy 0..1 for the scope amplitude; rises on every trigger
-    // and decays as notes finish.
-    float energy(double t) const {
-        float e = 0.0f;
-        for (const auto& v : voices_) {
-            if (v.note < 0) continue;
-            float life = (float)(v.endT - t);
-            if (life > 0.0f) e += std::min(life * 2.0f, 1.0f);
+    // Stop any voice still holding this note (key released).
+    void noteOff(int note) {
+        for (auto& v : voices_) {
+            if (v.note == note) {
+                v.sound.stop();
+                v.note = -1;
+            }
         }
-        return std::min(e * 0.35f, 1.0f);
     }
 
 private:
