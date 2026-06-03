@@ -67,13 +67,19 @@ Because the octave buttons don't send MIDI, the note you receive is already
 octave-shifted by the device — you can't tell the absolute physical key from the
 note number alone.
 
-## Pad LEDs (best effort)
+## Pad LEDs
 
-The pads have **red/green 2-colour LEDs** (no blue). The demo lights a pad by
-echoing its note back on **channel 10** with a velocity colour = `16*green + red`
-(each 0–3). This is unconfirmed on the Mk1 — if the device ignores it the
-keyboard and knobs still work and the pads just stay dark. No SysEx is used, so
-unlike the Launchpad demo this can also run on the Web (Web MIDI input).
+The pads have **red/green 2-colour LEDs** (no blue), but on the **Mk1 in its
+default (basic) mode the LEDs are local-only** — they light when you press a pad
+and don't respond to host MIDI. So this demo can't colour them from code; the
+on-screen pad grid is the real feedback.
+
+Host LED control needs the device's **InControl mode** (the physical InControl
+button, or an enable message), which also moves the pads to a different channel
+and layout, and the Mk1's InControl LED protocol is poorly documented and
+unreliable. So the demo stays in basic mode. The `setPadLed()` hook in
+`LaunchkeyMini.h` is left in place (best-effort, a no-op on this hardware) for
+devices/modes that do support it.
 
 ## Other devices
 

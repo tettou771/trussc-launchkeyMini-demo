@@ -85,8 +85,9 @@ void tcApp::update() {
         started_   = true;
         connected_ = lk_.connect("Launchkey");
         if (connected_) {
-            logNotice("launchkey") << "Connected"
-                << (lk_.hasLeds() ? " (pad LEDs on)" : " (no LED port)");
+            // Pad LEDs are local-only on the Mk1 in basic mode (host LED control
+            // would need InControl mode); we still send them best-effort.
+            logNotice("launchkey") << "Connected (Mk1 pads are local-LED only)";
             refreshPadLeds();
         } else {
             logWarning("launchkey") << "No Launchkey Mini found - connect one and relaunch";
@@ -120,10 +121,9 @@ void tcApp::draw() {
     setColor(1.0f);
     drawBitmapString("tcxMidi - Launchkey Mini [MK1] chiptune synth", 20, 26);
     setColor(connected_ ? Color(0.4f, 1.0f, 0.5f) : Color(1.0f, 0.6f, 0.3f));
-    drawBitmapString(connected_ ? (lk_.hasLeds() ? "device connected - LEDs on"
-                                                 : "device connected")
+    drawBitmapString(connected_ ? "device connected"
                                 : "no device - connect a Launchkey Mini",
-                     W - 320, 26);
+                     W - 280, 26);
 
     double t = getElapsedTime();
 
