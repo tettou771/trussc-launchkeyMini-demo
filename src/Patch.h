@@ -4,8 +4,8 @@
 // Patch - the chiptune synth's live parameters, knob mapping and presets
 // =============================================================================
 // A Patch fully describes one voice. The 8 knobs (CC 21..28) edit it in real
-// time; Voices.h turns a (Patch + note) into an audible ChipSound. The top pad
-// row picks one of the 8 presets below.
+// time; Synth.h turns a (Patch + note) into a live-synthesised voice. The top
+// pad row picks one of the 8 presets below.
 // =============================================================================
 
 #include <TrussC.h>

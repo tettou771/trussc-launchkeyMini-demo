@@ -47,8 +47,10 @@ float waveHue(int waveIndex) {
 void tcApp::setup() {
     selectPreset(0);  // give the keys a sound before any pad is touched
 
-    // Start the audio engine and tap its output for the oscilloscope.
+    // Start the audio engine, attach the synth (generator) and tap the output
+    // for the oscilloscope (monitor, runs last).
     AudioEngine::getInstance().init();
+    synth_.attach();
     scope_.attach();
 
     lk_.onKey  = [this](int note, int vel, bool on)  { onKey(note, vel, on); };
@@ -96,10 +98,22 @@ void tcApp::update() {
 void tcApp::draw() {
     clear(0.07f);
 
-    // Hold the lock for the frame: the MIDI thread mutates the state we read
-    // here. (Drawing is fast; a note that lands mid-draw waits < a frame's
-    // draw time - far less than the ~16 ms of frame-rate polling.)
-    std::lock_guard<std::mutex> lock(mtx_);
+    // Snapshot the state the MIDI thread also writes, under a short lock, then
+    // draw lock-free from the copy. Holding the lock for the whole frame would
+    // block a note that lands mid-draw for up to ~16 ms; this keeps the
+    // critical section to a ~1.5 KB copy.
+    Frame f;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        f.patch     = patch_;
+        f.held      = held_;
+        f.vel       = noteVel_;
+        f.glow      = knobGlow_;
+        f.flash     = padFlash_;
+        f.preset    = preset_;
+        f.octave    = octaveIdx_;
+        f.connected = connected_;
+    }
 
     const float W = (float)getWindowWidth();
     const float H = (float)getWindowHeight();
@@ -107,16 +121,14 @@ void tcApp::draw() {
     // Header.
     setColor(1.0f);
     drawBitmapString("tcxMidi - Launchkey Mini [MK1] chiptune synth", 20, 26);
-    setColor(connected_ ? Color(0.4f, 1.0f, 0.5f) : Color(1.0f, 0.6f, 0.3f));
-    drawBitmapString(connected_ ? "device connected"
-                                : "no device - connect a Launchkey Mini",
+    setColor(f.connected ? Color(0.4f, 1.0f, 0.5f) : Color(1.0f, 0.6f, 0.3f));
+    drawBitmapString(f.connected ? "device connected"
+                                 : "no device - connect a Launchkey Mini",
                      W - 280, 26);
 
-    double t = getElapsedTime();
-
     // Layout bands.
-    drawScope(20, 44, W - 40, 120, t);
-    drawKnobs(20, 184, W - 40, 110, t);
+    drawScope(f, 20, 44, W - 40, 120);
+    drawKnobs(f, 20, 184, W - 40, 110);
 
     // Remember the keyboard rect so note events can locate a key's x.
     kbX_ = 20;   kbW_ = W - 40;
@@ -124,8 +136,8 @@ void tcApp::draw() {
 
     float padsY = 312;
     float padsH = kbY_ - padsY - 16;
-    drawPads(20, padsY, W - 40, padsH, t);
-    drawKeyboard(kbX_, kbY_, kbW_, kbH_);
+    drawPads(f, 20, padsY, W - 40, padsH);
+    drawKeyboard(f, kbX_, kbY_, kbW_, kbH_);
 
     // Footer help.
     setColor(0.55f);
@@ -151,10 +163,10 @@ void tcApp::onKey(int note, int velocity, bool on) {
     if (on) {
         held_[pitch]    = true;
         noteVel_[pitch] = velocity / 127.0f;
-        voices_.noteOn(pitch, velocity, patch_, getElapsedTime());
+        synth_.noteOn(pitch, velocity, patch_);
     } else {
         held_[pitch] = false;
-        voices_.noteOff(pitch);  // releasing the key stops the note
+        synth_.noteOff(pitch);  // key release starts the note's release tail
     }
 }
 
@@ -210,9 +222,7 @@ void tcApp::refreshPadLeds() {
 // =============================================================================
 // Drawing
 // =============================================================================
-void tcApp::drawScope(float x, float y, float w, float h, double t) {
-    (void)t;
-
+void tcApp::drawScope(const Frame& f, float x, float y, float w, float h) {
     // Panel + zero line.
     setColor(0.11f);
     drawRect(x, y, w, h);
@@ -226,7 +236,7 @@ void tcApp::drawScope(float x, float y, float w, float h, double t) {
 
     const float gain  = h * 0.45f * 3.5f;  // output is quiet; scale it up
     const float clamp = h * 0.48f;
-    setColor(Color::fromHSB(waveHue(patch_.waveIndex()), 0.6f, 1.0f));
+    setColor(Color::fromHSB(waveHue(f.patch.waveIndex()), 0.6f, 1.0f));
 
     float px = x, py = cy;
     for (int i = 0; i < Scope::N; ++i) {
@@ -240,10 +250,10 @@ void tcApp::drawScope(float x, float y, float w, float h, double t) {
     }
 
     setColor(0.5f);
-    drawBitmapString(string("audio out  (wave: ") + patch_.waveName() + ")", x + 8, y + 16);
+    drawBitmapString(string("audio out  (wave: ") + f.patch.waveName() + ")", x + 8, y + 16);
 }
 
-void tcApp::drawKnobs(float x, float y, float w, float h, double t) {
+void tcApp::drawKnobs(const Frame& f, float x, float y, float w, float h) {
     const int   n  = 8;
     const float cw = w / n;
     const float r  = std::min(cw * 0.32f, h * 0.34f);
@@ -251,8 +261,8 @@ void tcApp::drawKnobs(float x, float y, float w, float h, double t) {
     for (int i = 0; i < n; ++i) {
         float cx = x + cw * (i + 0.5f);
         float cy = y + h * 0.40f;
-        float v  = patch_.knobValue(i);
-        float glow = knobGlow_[i];
+        float v  = f.patch.knobValue(i);
+        float glow = f.glow[i];
 
         // Ring (brighter just after the knob was touched).
         noFill();
@@ -274,10 +284,9 @@ void tcApp::drawKnobs(float x, float y, float w, float h, double t) {
         setColor(0.55f);
         drawBitmapString(pct, cx - pct.size() * 4.0f, y + h - 4);
     }
-    (void)t;
 }
 
-void tcApp::drawPads(float x, float y, float w, float h, double t) {
+void tcApp::drawPads(const Frame& f, float x, float y, float w, float h) {
     const int   cols = 8;
     const float gap  = 6.0f;
     const float pw   = (w - gap * (cols - 1)) / cols;
@@ -292,19 +301,19 @@ void tcApp::drawPads(float x, float y, float w, float h, double t) {
             // Base colour from the current selection.
             Color base(0.14f, 0.14f, 0.16f);
             if (row == 0) {  // preset slots
-                base = (col == preset_) ? Color(0.25f, 0.95f, 0.4f)
-                                        : Color(0.30f, 0.13f, 0.13f);
+                base = (col == f.preset) ? Color(0.25f, 0.95f, 0.4f)
+                                         : Color(0.30f, 0.13f, 0.13f);
             } else {         // octave
-                base = (col == octaveIdx_) ? Color(1.0f, 0.65f, 0.2f)
-                     : (col == 4)          ? Color(0.13f, 0.28f, 0.16f)
-                                           : Color(0.14f, 0.14f, 0.16f);
+                base = (col == f.octave) ? Color(1.0f, 0.65f, 0.2f)
+                     : (col == 4)        ? Color(0.13f, 0.28f, 0.16f)
+                                         : Color(0.14f, 0.14f, 0.16f);
             }
 
             // Flash brighter just after a hit.
-            float f = padFlash_[index];
-            setColor(Color(base.r + (1.0f - base.r) * f,
-                           base.g + (1.0f - base.g) * f,
-                           base.b + (1.0f - base.b) * f));
+            float flash = f.flash[index];
+            setColor(Color(base.r + (1.0f - base.r) * flash,
+                           base.g + (1.0f - base.g) * flash,
+                           base.b + (1.0f - base.b) * flash));
             drawRectRounded(px, py, pw, ph, 6.0f);
 
             // Label.
@@ -316,10 +325,9 @@ void tcApp::drawPads(float x, float y, float w, float h, double t) {
             drawBitmapString(text, px + 6, py + ph * 0.5f + 4);
         }
     }
-    (void)t;
 }
 
-void tcApp::drawKeyboard(float x, float y, float w, float h) {
+void tcApp::drawKeyboard(const Frame& f, float x, float y, float w, float h) {
     int   nWhite = whiteCount();
     float kw     = w / nWhite;
 
@@ -327,9 +335,9 @@ void tcApp::drawKeyboard(float x, float y, float w, float h) {
     for (int n = kLo; n <= kHi; ++n) {
         if (!isWhite(n)) continue;
         float kx = x + whitesBefore(n) * kw;
-        float v  = held_[n] ? noteVel_[n] : 0.0f;
-        if (held_[n]) setColor(Color(0.4f + 0.6f * v, 0.9f, 0.5f + 0.4f * v));
-        else          setColor(Color(0.92f, 0.92f, 0.92f));
+        float v  = f.held[n] ? f.vel[n] : 0.0f;
+        if (f.held[n]) setColor(Color(0.4f + 0.6f * v, 0.9f, 0.5f + 0.4f * v));
+        else           setColor(Color(0.92f, 0.92f, 0.92f));
         drawRect(kx + 1, y, kw - 2, h);
 
         // Mark each C.
@@ -345,9 +353,9 @@ void tcApp::drawKeyboard(float x, float y, float w, float h) {
     for (int n = kLo; n <= kHi; ++n) {
         if (isWhite(n)) continue;
         float kx = x + whitesBefore(n) * kw - bw * 0.5f;
-        float v  = held_[n] ? noteVel_[n] : 0.0f;
-        if (held_[n]) setColor(Color(0.3f + 0.7f * v, 0.8f, 0.4f + 0.5f * v));
-        else          setColor(Color(0.08f, 0.08f, 0.1f));
+        float v  = f.held[n] ? f.vel[n] : 0.0f;
+        if (f.held[n]) setColor(Color(0.3f + 0.7f * v, 0.8f, 0.4f + 0.5f * v));
+        else           setColor(Color(0.08f, 0.08f, 0.1f));
         drawRect(kx, y, bw, bh);
     }
 }

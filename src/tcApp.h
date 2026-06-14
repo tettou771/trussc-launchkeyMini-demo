@@ -4,7 +4,7 @@
 
 #include "LaunchkeyMini.h"
 #include "Patch.h"
-#include "Voices.h"
+#include "Synth.h"
 #include "Scope.h"
 
 #include <array>
@@ -46,14 +46,28 @@ private:
     void selectOctave(int index);
     void refreshPadLeds();
 
-    // Drawing helpers.
-    void drawScope(float x, float y, float w, float h, double t);
-    void drawKnobs(float x, float y, float w, float h, double t);
-    void drawPads(float x, float y, float w, float h, double t);
-    void drawKeyboard(float x, float y, float w, float h);
+    // Snapshot of the shared state draw() needs, copied once per frame under a
+    // short lock so the rest of drawing runs lock-free (the MIDI thread writes
+    // these; see draw()).
+    struct Frame {
+        Patch             patch;
+        array<bool,  128> held{};
+        array<float, 128> vel{};
+        array<float, 8>   glow{};
+        array<float, 16>  flash{};
+        int  preset    = 0;
+        int  octave    = 4;
+        bool connected = false;
+    };
+
+    // Drawing helpers (read the per-frame snapshot, never the live members).
+    void drawScope(const Frame& f, float x, float y, float w, float h);
+    void drawKnobs(const Frame& f, float x, float y, float w, float h);
+    void drawPads(const Frame& f, float x, float y, float w, float h);
+    void drawKeyboard(const Frame& f, float x, float y, float w, float h);
 
     LaunchkeyMini lk_;
-    Voices        voices_;
+    Synth         synth_;
     Patch         patch_;
     Scope         scope_;
 
