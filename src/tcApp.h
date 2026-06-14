@@ -18,8 +18,8 @@ using namespace std;
 // Launchkey Mini [MK1] demo - a playable chiptune synth
 // =============================================================================
 //   Keys  : play ChipSound notes (velocity sensitive, polyphonic).
-//   Knobs : the 8 knobs shape the live patch (wave / ADSR / length / detune /
-//           volume) - every new note is built from the current knob values.
+//   Knobs : the 8 knobs shape the live patch (wave / ADSR / sub / detune /
+//           volume) - every new note is synthesised from the current values.
 //   Pads  : the top row picks one of 8 preset patches; the bottom row
 //           transposes by octave. Selected pads light up (2-colour LEDs).
 //

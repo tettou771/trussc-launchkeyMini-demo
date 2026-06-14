@@ -141,7 +141,7 @@ void tcApp::draw() {
 
     // Footer help.
     setColor(0.55f);
-    drawBitmapString("keys = play   knobs = wave/ADSR/length/detune/volume   "
+    drawBitmapString("keys = play   knobs = wave/ADSR/sub/detune/volume   "
                      "top pads = preset   bottom pads / round buttons = octave",
                      20, H - 16);
 }

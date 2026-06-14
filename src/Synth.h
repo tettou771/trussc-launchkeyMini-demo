@@ -93,6 +93,10 @@ struct Voice {
     float    phase  = 0.0f;   // 0..1
     float    gain   = 0.0f;   // waveGain * velocity * volume (peak amplitude)
 
+    // Sub-oscillator: a square one octave below, mixed in by `sub` (0..1).
+    float    subPhase = 0.0f;
+    float    sub      = 0.0f;
+
     // ADSR: a/d/r in seconds, s is a 0..1 level.
     float    attack = 0.0f, decay = 0.0f, sustain = 0.0f, release = 0.0f;
     Stage    stage  = Stage::Attack;
@@ -114,6 +118,8 @@ struct Voice {
         env     = 0.0f;
         stage   = Stage::Attack;
         rng     = 0x1234567u + (uint32_t)n * 2654435761u;
+        subPhase = 0.0f;
+        sub      = p.subMix;
         active  = true;
     }
 
@@ -123,8 +129,10 @@ struct Voice {
         stage   = Stage::Release;
     }
 
-    float oscillator() {
-        switch (wave) {
+    // One waveform sample for a given phase (0..1). rng is only touched by
+    // Noise, so the sub-oscillator (always Square) can share the voice's rng.
+    static float oscillator(Wave w, float phase, uint32_t& rng) {
+        switch (w) {
             case Wave::Sin:      return std::sin(TAU * phase);
             case Wave::Triangle: return 4.0f * std::fabs(phase - 0.5f) - 1.0f;
             case Wave::Square:   return phase < 0.5f ? 1.0f : -1.0f;
@@ -156,9 +164,20 @@ struct Voice {
                 break;
         }
 
-        float s = oscillator() * env * gain;
+        // Main oscillator, plus an optional square sub one octave down.
+        // Normalise by (1 + sub) so adding the sub thickens without raising
+        // the peak past the per-wave gain (keeps the clip headroom).
+        float s = oscillator(wave, phase, rng);
+        if (sub > 0.0f) {
+            float subSample = oscillator(Wave::Square, subPhase, rng);
+            s = (s + subSample * sub) / (1.0f + sub);
+        }
+        s *= env * gain;
+
         phase += freq / sr;
         if (phase >= 1.0f) phase -= 1.0f;
+        subPhase += (freq * 0.5f) / sr;  // one octave down
+        if (subPhase >= 1.0f) subPhase -= 1.0f;
         return s;
     }
 };

@@ -20,7 +20,7 @@ struct Patch {
     float decay   = 0.06f;   // seconds
     float sustain = 0.6f;    // 0..1 level
     float release = 0.12f;   // seconds
-    float length  = 0.45f;   // seconds (total note duration)
+    float subMix  = 0.0f;    // sub-oscillator (1 octave down, square) mix 0..1
     float detune  = 0.0f;    // semitones (fine, -1..+1)
     float volume  = 0.5f;    // 0..1
 
@@ -57,7 +57,7 @@ struct Patch {
             case 2: decay   = 0.005f + n * 0.5f;    break;
             case 3: sustain = n;                    break;
             case 4: release = 0.005f + n * 0.8f;    break;
-            case 5: length  = 0.08f  + n * 1.6f;    break;  // 80 ms .. 1.7 s
+            case 5: subMix  = n;                    break;  // 0 .. 1
             case 6: detune  = (n - 0.5f) * 2.0f;    break;  // -1 .. +1 semitone
             case 7: volume  = n;                    break;
         }
@@ -71,7 +71,7 @@ struct Patch {
             case 2: return (decay   - 0.005f) / 0.5f;
             case 3: return sustain;
             case 4: return (release - 0.005f) / 0.8f;
-            case 5: return (length  - 0.08f)  / 1.6f;
+            case 5: return subMix;
             case 6: return detune * 0.5f + 0.5f;
             case 7: return volume;
         }
@@ -81,7 +81,7 @@ struct Patch {
 
 inline const char* knobName(int index) {
     static const char* names[8] = {
-        "WAVE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE", "LENGTH", "DETUNE", "VOLUME"
+        "WAVE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE", "SUB", "DETUNE", "VOLUME"
     };
     return (index >= 0 && index < 8) ? names[index] : "?";
 }
@@ -92,17 +92,17 @@ inline float midiToHz(float note) {
 }
 
 // 8 preset patches, picked by the top pad row.
-//                          wave            atk    dec    sus   rel    len   det    vol
+//                          wave            atk    dec    sus   rel    sub    det    vol
 inline Patch presetPatch(int index) {
     switch (index & 7) {
-        case 0: return {Wave::Square,   0.004f, 0.06f, 0.6f, 0.12f, 0.45f, 0.0f,  0.5f};  // Lead
-        case 1: return {Wave::Triangle, 0.005f, 0.10f, 0.7f, 0.20f, 0.70f, 0.0f,  0.5f};  // Soft
-        case 2: return {Wave::Sawtooth, 0.004f, 0.14f, 0.5f, 0.16f, 0.60f, 0.06f, 0.45f}; // Buzz
-        case 3: return {Wave::Sin,      0.02f,  0.20f, 0.8f, 0.30f, 0.95f, 0.0f,  0.5f};  // Pad
-        case 4: return {Wave::Square,   0.001f, 0.05f, 0.0f, 0.05f, 0.20f, 0.0f,  0.5f};  // Pluck
-        case 5: return {Wave::Sawtooth, 0.001f, 0.04f, 0.0f, 0.06f, 0.18f, 0.0f,  0.45f}; // Stab
-        case 6: return {Wave::Triangle, 0.002f, 0.05f, 0.3f, 0.10f, 0.32f, 0.0f,  0.5f};  // Bell
-        case 7: return {Wave::Noise,    0.001f, 0.06f, 0.0f, 0.07f, 0.22f, 0.0f,  0.4f};  // Perc
+        case 0: return {Wave::Square,   0.004f, 0.06f, 0.6f, 0.12f, 0.30f, 0.0f,  0.5f};  // Lead
+        case 1: return {Wave::Triangle, 0.005f, 0.10f, 0.7f, 0.20f, 0.20f, 0.0f,  0.5f};  // Soft
+        case 2: return {Wave::Sawtooth, 0.004f, 0.14f, 0.5f, 0.16f, 0.25f, 0.06f, 0.45f}; // Buzz
+        case 3: return {Wave::Sin,      0.02f,  0.20f, 0.8f, 0.30f, 0.15f, 0.0f,  0.5f};  // Pad
+        case 4: return {Wave::Square,   0.001f, 0.05f, 0.0f, 0.05f, 0.40f, 0.0f,  0.5f};  // Pluck
+        case 5: return {Wave::Sawtooth, 0.001f, 0.04f, 0.0f, 0.06f, 0.30f, 0.0f,  0.45f}; // Stab
+        case 6: return {Wave::Triangle, 0.002f, 0.05f, 0.3f, 0.10f, 0.10f, 0.0f,  0.5f};  // Bell
+        case 7: return {Wave::Noise,    0.001f, 0.06f, 0.0f, 0.07f, 0.00f, 0.0f,  0.4f};  // Perc
     }
     return {};
 }
